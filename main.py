@@ -17,20 +17,17 @@ dp = Dispatcher()
 
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
-    await message.answer("Salom! Menga YouTube havolasini yuboring, men sizga qo'shiqni yuklab beraman! 🎵")
+    await message.answer("Salom! Menga YouTube, TikTok yoki Instagram havolasini yuboring.\nMen sizga qo'shiqni (MP3) yuklab beraman! 🎵")
 
 @dp.message()
 async def download_song(message: types.Message):
     url = message.text.strip() if message.text else ""
     
     if not url.startswith(("http://", "https://")):
-        await message.answer("Iltimos, to'g'ri YouTube havolasini yuboring.")
+        await message.answer("Iltimos, to'g'ri havola yuboring.")
         return
 
-    status_msg = await message.answer("⏳ Qo'shiq yuklab olinmoqda, biroz kuting...")
-
-    # Fayl nomi doimiy bo'lsin
-    output_template = "song.%(ext)s"
+    status_msg = await message.answer("⏳ Yuklab olinmoqda, biroz kuting...")
 
     ydl_opts = {
         'format': 'bestaudio/best',
@@ -39,9 +36,16 @@ async def download_song(message: types.Message):
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }],
-        'outtmpl': output_template,
+        'outtmpl': 'song.%(ext)s',
         'quiet': True,
         'noplaylist': True,
+        'no_warnings': True,
+        # YouTube uchun muhim sozlamalar (2026)
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web', 'ios'],
+            }
+        },
     }
 
     mp3_path = "song.mp3"
@@ -50,9 +54,7 @@ async def download_song(message: types.Message):
         def download():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
-            return mp3_path
 
-        # Yuklab olish (bloklovchi operatsiyani thread ga chiqaramiz)
         await asyncio.to_thread(download)
 
         if os.path.exists(mp3_path):
@@ -60,19 +62,38 @@ async def download_song(message: types.Message):
             await message.answer_audio(audio)
             await status_msg.delete()
         else:
-            await status_msg.edit_text("Xatolik: mp3 fayl yaratilmadi.")
+            await status_msg.edit_text("❌ Fayl yaratilmadi. Qayta urinib ko'ring.")
 
     except Exception as e:
-        logging.error(f"Xatolik: {e}")
-        await status_msg.edit_text("Kechirasiz, bu havoladan qo'shiqni yuklab bo'lmadi.\n\nSabab: video mavjud emas yoki yuklab olish mumkin emas.")
+        error_text = str(e)
+        logging.error(f"Xatolik: {error_text}")
+        
+        # Foydalanuvchiga tushunarli xabar
+        if "Private video" in error_text or "private" in error_text.lower():
+            await status_msg.edit_text("🔒 Bu video maxfiy (private). Yuklab bo'lmaydi.")
+        elif "Video unavailable" in error_text:
+            await status_msg.edit_text("❌ Video mavjud emas yoki o'chirib tashlangan.")
+        elif "Sign in" in error_text or "cookies" in error_text.lower():
+            await status_msg.edit_text("⚠️ YouTube blokladi. Keyinroq urinib ko'ring.")
+        else:
+            await status_msg.edit_text(
+                "Kechirasiz, bu havoladan yuklab bo'lmadi.\n\n"
+                "Sabab: video himoyalangan yoki server tomonidan cheklangan."
+            )
     
     finally:
-        # Faylni o'chirish
         if os.path.exists(mp3_path):
             try:
                 os.remove(mp3_path)
             except:
                 pass
+        # Boshqa qoldiq fayllarni ham tozalash
+        for f in os.listdir("."):
+            if f.startswith("song.") and f != "song.mp3":
+                try:
+                    os.remove(f)
+                except:
+                    pass
 
 # Render uchun veb-server
 async def handle(request):
@@ -94,17 +115,3 @@ async def main():
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     asyncio.run(main())
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-        'outtmpl': output_template,
-        'quiet': True,
-        'noplaylist': True,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-    }
