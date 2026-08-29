@@ -1,117 +1,100 @@
 import os
 import asyncio
 import logging
-from aiogram import Bot, Dispatcher, types
+import re
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import FSInputFile
+from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiohttp import web
 import yt_dlp
 
 TOKEN = os.getenv("TOKEN")
-
 if not TOKEN:
     raise ValueError("TOKEN environment variable is missing!")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-@dp.message(Command("start"))
-async def start_cmd(message: types.Message):
-    await message.answer("Salom! Menga YouTube, TikTok yoki Instagram havolasini yuboring.\nMen sizga qo'shiqni (MP3) yuklab beraman! 🎵")
+# ==================== SOZLAMALAR ====================
 
-@dp.message()
-async def download_song(message: types.Message):
-    url = message.text.strip() if message.text else ""
-    
-    if not url.startswith(("http://", "https://")):
-        await message.answer("Iltimos, to'g'ri havola yuboring.")
-        return
-
-    status_msg = await message.answer("⏳ Yuklab olinmoqda, biroz kuting...")
-
-    ydl_opts = {
+def get_audio_opts():
+    return {
         'format': 'bestaudio/best',
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }],
-        'outtmpl': 'song.%(ext)s',
+        'outtmpl': 'media.%(ext)s',
         'quiet': True,
-        'noplaylist': True,
         'no_warnings': True,
-        # YouTube uchun muhim sozlamalar (2026)
+        'noplaylist': True,
+        'retries': 5,
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'web', 'ios'],
+                'player_client': ['android', 'ios', 'web'],
             }
         },
     }
 
-    mp3_path = "song.mp3"
+def get_video_opts():
+    return {
+        'format': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best',
+        'outtmpl': 'media.%(ext)s',
+        'merge_output_format': 'mp4',
+        'quiet': True,
+        'no_warnings': True,
+        'noplaylist': True,
+        'retries': 5,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'ios', 'web'],
+            }
+        },
+    }
 
-    try:
-        def download():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+def is_valid_url(text: str) -> bool:
+    return bool(re.match(r'https?://', text.strip()))
 
-        await asyncio.to_thread(download)
-
-        if os.path.exists(mp3_path):
-            audio = FSInputFile(mp3_path)
-            await message.answer_audio(audio)
-            await status_msg.delete()
-        else:
-            await status_msg.edit_text("❌ Fayl yaratilmadi. Qayta urinib ko'ring.")
-
-    except Exception as e:
-        error_text = str(e)
-        logging.error(f"Xatolik: {error_text}")
-        
-        # Foydalanuvchiga tushunarli xabar
-        if "Private video" in error_text or "private" in error_text.lower():
-            await status_msg.edit_text("🔒 Bu video maxfiy (private). Yuklab bo'lmaydi.")
-        elif "Video unavailable" in error_text:
-            await status_msg.edit_text("❌ Video mavjud emas yoki o'chirib tashlangan.")
-        elif "Sign in" in error_text or "cookies" in error_text.lower():
-            await status_msg.edit_text("⚠️ YouTube blokladi. Keyinroq urinib ko'ring.")
-        else:
-            await status_msg.edit_text(
-                "Kechirasiz, bu havoladan yuklab bo'lmadi.\n\n"
-                "Sabab: video himoyalangan yoki server tomonidan cheklangan."
-            )
-    
-    finally:
-        if os.path.exists(mp3_path):
+def clean_files():
+    for file in os.listdir("."):
+        if file.startswith("media."):
             try:
-                os.remove(mp3_path)
+                os.remove(file)
             except:
                 pass
-        # Boshqa qoldiq fayllarni ham tozalash
-        for f in os.listdir("."):
-            if f.startswith("song.") and f != "song.mp3":
-                try:
-                    os.remove(f)
-                except:
-                    pass
 
-# Render uchun veb-server
-async def handle(request):
-    return web.Response(text="Bot is running!")
+# ==================== KOMANDALAR ====================
 
-async def web_server():
-    app = web.Application()
-    app.router.add_get("/", handle)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.environ.get("PORT", 8080))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
+@dp.message(Command("start"))
+async def start_cmd(message: types.Message):
+    await message.answer(
+        "🎵 <b>SaveSongBot</b> — Eng zo'r yuklovchi bot\n\n"
+        "Quyidagi platformalardan havola yuboring:\n"
+        "• YouTube\n"
+        "• TikTok\n"
+        "• Instagram\n\n"
+        "Keyin <b>Musiqa</b> yoki <b>Video</b> ni tanlang.",
+        parse_mode="HTML"
+    )
 
-async def main():
-    await web_server()
-    await dp.start_polling(bot)
+@dp.message(Command("help"))
+async def help_cmd(message: types.Message):
+    await message.answer(
+        "📖 <b>Qanday ishlatiladi?</b>\n\n"
+        "1. Video havolasini yuboring\n"
+        "2. <b>🎵 Musiqa</b> yoki <b>🎬 Video</b> tugmasini bosing\n"
+        "3. Bot yuklab beradi\n\n"
+        "Qo'llab-quvvatlanadi:\n"
+        "✅ YouTube\n✅ TikTok\n✅ Instagram",
+        parse_mode="HTML"
+    )
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    asyncio.run(main())
+# ==================== HAVOLA QABUL QILISH ====================
+
+@dp.message(F.text)
+async def handle_url(message: types.Message):
+    url = message.text.strip()
+
+    if not is_valid_url(url):
+        await message.
